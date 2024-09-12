@@ -1,0 +1,149 @@
+内核netif_rx函数底层实现
+bot
+netif_rx 是 Linux 内核中的一个函数，用于将接收到的网络数据包传递给内核网络栈进行处理。这个函数通常在网络设备驱动程序中调用，用于将硬件接收到的数据包传递给上层协议栈。
+
+netif_rx 函数原型
+c
+Copy code
+
+int netif_rx(struct sk_buff *skb);
+skb：指向接收到的数据包的 struct sk_buff 结构体指针。
+功能
+netif_rx 函数的主要功能是将接收到的数据包放入网络子系统的输入队列，并调度软中断（softirq）进行进一步处理。
+
+底层实现
+以下是 netif_rx 函数的底层实现，基于 Linux 内核代码（以 5.x 版本为例）。实际代码可能会有所不同，具体取决于内核版本。
+
+1. netif_rx 函数
+netif_rx 函数的实现位于 net/core/dev.c 文件中。以下是简化后的代码：
+
+c
+Copy code
+
+int netif_rx(struct sk_buff *skb)
+{
+    int ret;
+
+    if (!skb)
+        return NET_RX_DROP;
+
+    ret = netif_rx_internal(skb);
+
+    return ret;
+}
+2. netif_rx_internal 函数
+netif_rx_internal 函数是 netif_rx 的内部实现，负责将数据包放入输入队列，并调度软中断进行处理。
+
+c
+Copy code
+
+static int netif_rx_internal(struct sk_buff *skb)
+{
+    struct softnet_data *sd;
+    unsigned long flags;
+
+    sd = this_cpu_ptr(&softnet_data);
+
+    local_irq_save(flags);
+    rps_lock(sd);
+
+    if (!netif_receive_skb_list(skb, &sd->input_pkt_queue)) {
+        __netif_rx_schedule(sd);
+        rps_unlock(sd);
+        local_irq_restore(flags);
+        return NET_RX_SUCCESS;
+    }
+
+    rps_unlock(sd);
+    local_irq_restore(flags);
+    return NET_RX_DROP;
+}
+3. netif_receive_skb_list 函数
+netif_receive_skb_list 函数将数据包放入输入队列。
+
+c
+Copy code
+
+static inline int netif_receive_skb_list(struct sk_buff *skb, struct sk_buff_head *list)
+{
+    __skb_queue_tail(list, skb);
+    return 0;
+}
+4. __netif_rx_schedule 函数
+__netif_rx_schedule 函数调度软中断进行处理。
+
+c
+Copy code
+
+static inline void __netif_rx_schedule(struct softnet_data *sd)
+{
+    if (!test_and_set_bit(NAPI_STATE_SCHED, &sd->backlog.state))
+        ____napi_schedule(sd);
+}
+5. ____napi_schedule 函数
+____napi_schedule 函数用于调度 NAPI 软中断。
+
+c
+Copy code
+
+static inline void ____napi_schedule(struct softnet_data *sd)
+{
+    list_add_tail(&sd->poll_list, &sd->backlog.poll_list);
+    __raise_softirq_irqoff(NET_RX_SOFTIRQ);
+}
+软中断处理
+当软中断被调度时，内核会调用相应的软中断处理程序来处理输入队列中的数据包。以下是软中断处理的相关代码：
+
+1. net_rx_action 函数
+net_rx_action 函数是 NET_RX_SOFTIRQ 软中断的处理程序，负责处理输入队列中的数据包。
+
+c
+Copy code
+
+static void net_rx_action(struct softirq_action *h)
+{
+    struct softnet_data *sd = this_cpu_ptr(&softnet_data);
+    struct napi_struct *n;
+
+    while (!list_empty(&sd->poll_list)) {
+        n = list_first_entry(&sd->poll_list, struct napi_struct, poll_list);
+        list_del_init(&n->poll_list);
+
+        napi_poll(n, &budget);
+    }
+}
+2. napi_poll 函数
+napi_poll 函数调用网络设备的 poll 方法，处理接收到的数据包。
+
+c
+Copy code
+
+int napi_poll(struct napi_struct *n, int *budget)
+{
+    int work, weight;
+
+    weight = n->weight;
+    work = n->poll(n, weight);
+
+    if (work < weight) {
+        napi_complete(n);
+        return work;
+    }
+
+    return weight;
+}
+总结
+netif_rx 函数的底层实现涉及多个步骤和函数调用：
+
+netif_rx 函数：接收数据包并调用 netif_rx_internal。
+netif_rx_internal 函数：将数据包放入输入队列，并调度软中断进行处理。
+netif_receive_skb_list 函数：将数据包放入输入队列。
+__netif_rx_schedule 函数：调度软中断。
+软中断处理：软中断处理程序 net_rx_action 处理输入队列中的数据包，并调用 napi_poll 进行进一步处理。
+通过这些步骤，netif_rx 函数能够将接收到的数据包传递给内核网络栈进行处理。上述代码展示了 netif_rx 函数的底层实现，帮助理解其工作原理。实际代码可能会有所不同，具体取决于内核版本。
+
+
+
+
+Regenerate
+
