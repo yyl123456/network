@@ -1,0 +1,16 @@
+route TX ndo(net device ops:operations) Xmit(transmit)
+
+//路由表命令
+#ip route show
+
+//内核协议栈处理
+ip_queue_xmit(skb)
+  // 查找路由表
+  struct rtable *rt = ip_route_output_key(&init_net, &fl4);
+  // 设置网络设备
+  skb->dev = rt->dst.dev;
+  // 发送数据包
+  dev_queue_xmit(skb)
+      // 调用网络设备的 ndo_start_xmit 函数
+      dev->netdev_ops->ndo_start_xmit(skb, dev);
+  
